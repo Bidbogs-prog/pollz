@@ -10,10 +10,16 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+
+type Option = {
+  text: string;
+  votes: number;
+};
 
 type Poll = {
   question: string;
-  options: string[];
+  options: Option[];
 };
 
 export default function Home() {
@@ -32,7 +38,12 @@ export default function Home() {
 
     const newPoll: Poll = {
       question,
-      options: options.filter((option) => option.trim() !== ""),
+      options: options
+        .filter((option) => option.trim() !== "")
+        .map((option) => ({
+          text: option,
+          votes: 0,
+        })),
     };
     setPolls([...polls, newPoll]);
     console.log(polls);
@@ -41,6 +52,12 @@ export default function Home() {
     setOptions(["", ""]);
     setError("");
     setOpen(false);
+  };
+
+  const handleVote = (pollIndex: number, optionIndex: number) => {
+    const newPolls = [...polls];
+    newPolls[pollIndex].options[optionIndex].votes += 1;
+    setPolls(newPolls);
   };
 
   const handleRemoveOptions = (indexToRemove: number) => {
@@ -119,25 +136,36 @@ export default function Home() {
           </DialogContent>
         </Dialog>
         <div className="mt-8  ">
-          {polls.map((poll, index) => (
-            <div className="flex gap-2 items-center">
-              <div key={index} className="mb-6 p-4 border rounded-lg">
+          {polls.map((poll, pollIndex) => (
+            <div className="flex gap-2 items-center" key={pollIndex}>
+              <div className="mb-6 p-4 border rounded-lg w-[400px]">
                 <h3 className="text-lg font-semibold mb-2">{poll.question}</h3>
                 <div className="space-y-2">
                   {poll.options.map((option, optionIndex) => (
-                    <div key={optionIndex} className="pl-4">
-                      • {option}
+                    <div
+                      key={optionIndex}
+                      className="pl-4 flex items-center gap-2"
+                    >
+                      <Checkbox
+                        onClick={() => handleVote(pollIndex, optionIndex)}
+                        id={`option-${pollIndex}-${optionIndex}`}
+                      />
+                      <label
+                        htmlFor={`option-${pollIndex}-${optionIndex}`}
+                        className="flex justify-between w-full"
+                      >
+                        <span>{option.text}</span>
+                        <span>{option.votes} votes</span>
+                      </label>
                     </div>
                   ))}
                 </div>
               </div>
               <Button
-                className=""
                 variant="destructive"
-                onClick={() => handleRemovePolls(index)}
+                onClick={() => handleRemovePolls(pollIndex)}
               >
-                {" "}
-                X{" "}
+                X
               </Button>
             </div>
           ))}
