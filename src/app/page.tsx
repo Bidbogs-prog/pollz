@@ -28,6 +28,7 @@ export default function Home() {
   const [options, setOptions] = useState(["", ""]);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string>("");
+  const [checkbox, setCheckbox] = useState(false);
 
   const handleAddOption = () => {
     setOptions([...options, ""]);
@@ -58,6 +59,7 @@ export default function Home() {
     const newPolls = [...polls];
     newPolls[pollIndex].options[optionIndex].votes += 1;
     setPolls(newPolls);
+    setCheckbox(true);
   };
 
   const handleRemoveOptions = (indexToRemove: number) => {
@@ -72,6 +74,7 @@ export default function Home() {
     const nonEmptyOptions = options.filter((opt) => opt.trim() !== "");
     return question.trim() !== "" && nonEmptyOptions.length >= 2;
   };
+  const isChecked = checkbox;
 
   return (
     <div className="min-h-screen p-8 sm:p-20">
@@ -149,6 +152,7 @@ export default function Home() {
                       <Checkbox
                         onClick={() => handleVote(pollIndex, optionIndex)}
                         id={`option-${pollIndex}-${optionIndex}`}
+                        disabled={isChecked}
                       />
                       <label
                         htmlFor={`option-${pollIndex}-${optionIndex}`}
