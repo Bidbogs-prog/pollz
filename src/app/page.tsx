@@ -1,7 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -21,6 +21,7 @@ type Poll = {
   question: string;
   options: Option[];
   hasVoted: boolean;
+  selectedOptionIndex?: number;
 };
 
 export default function Home() {
@@ -29,6 +30,21 @@ export default function Home() {
   const [options, setOptions] = useState(["", ""]);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string>("");
+
+  // Add this above your existing useEffect
+  useEffect(() => {
+    // Check if we're in the browser
+    if (typeof window !== "undefined") {
+      const savedPolls = localStorage.getItem("savedPolls");
+      if (savedPolls) {
+        setPolls(JSON.parse(savedPolls));
+      }
+    }
+  }, []); // Empty dependency array means it only runs once on mount
+
+  useEffect(() => {
+    localStorage.setItem("savedPolls", JSON.stringify(polls));
+  }, [polls]);
 
   const handleAddOption = () => {
     setOptions([...options, ""]);
@@ -48,7 +64,6 @@ export default function Home() {
       hasVoted: false,
     };
     setPolls([...polls, newPoll]);
-    console.log(polls);
 
     setQuestion("");
     setOptions(["", ""]);
@@ -60,6 +75,7 @@ export default function Home() {
     const newPolls = [...polls];
     newPolls[pollIndex].options[optionIndex].votes += 1;
     newPolls[pollIndex].hasVoted = true;
+    newPolls[pollIndex].selectedOptionIndex = optionIndex;
     setPolls(newPolls);
   };
 
@@ -80,7 +96,7 @@ export default function Home() {
     <div className="min-h-screen p-8 sm:p-20">
       <main>
         <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger>
+          <DialogTrigger asChild>
             <Button>Click to add poll</Button>
           </DialogTrigger>
           <DialogContent>
@@ -153,6 +169,7 @@ export default function Home() {
                         onClick={() => handleVote(pollIndex, optionIndex)}
                         id={`option-${pollIndex}-${optionIndex}`}
                         disabled={poll.hasVoted}
+                        checked={poll.selectedOptionIndex === optionIndex}
                       />
                       <label
                         htmlFor={`option-${pollIndex}-${optionIndex}`}
