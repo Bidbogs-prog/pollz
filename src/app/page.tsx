@@ -11,17 +11,30 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
-
-type Option = {
-  text: string;
-  votes: number;
-};
+import { supabase } from "@/lib/supabase";
+import { User } from "@supabase/supabase-js";
 
 type Poll = {
+  id: string;
+  created_at: string;
   question: string;
+  created_by: string | null;
   options: Option[];
-  hasVoted: boolean;
-  selectedOptionIndex?: number;
+  hasVoted: boolean; // Add this
+  selectedOptionIndex: string | null;
+};
+
+type Option = {
+  id: string;
+  poll_id: string;
+  text: string;
+};
+
+type Vote = {
+  id: string;
+  poll_id: string;
+  option_id: string;
+  user_id: string | null;
 };
 
 export default function Home() {
@@ -30,17 +43,47 @@ export default function Home() {
   const [options, setOptions] = useState(["", ""]);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string>("");
+  const [user, setUser] = useState<User | null>(null);
+  const [voteCounts, setVoteCounts] = useState<{ [key: string]: number }>({});
 
-  // Add this above your existing useEffect
   useEffect(() => {
-    // Check if we're in the browser
+    console.log("Setting up auth listener...");
+    // Get initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      console.log(
+        "Initial session check:",
+        session?.user ? "User logged in" : "No user"
+      );
+      setUser(session?.user ?? null);
+    });
+
+    // Listen for auth changes
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      console.log("Auth state changed:", _event);
+      console.log("New session:", session ? "User logged in" : "No user");
+      setUser(session?.user ?? null);
+    });
+
+    return () => {
+      console.log("Cleaning up auth listener...");
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    console.log("User state changed:", user ? "Logged in" : "Not logged in");
+  }, [user]);
+
+  useEffect(() => {
     if (typeof window !== "undefined") {
       const savedPolls = localStorage.getItem("savedPolls");
       if (savedPolls) {
         setPolls(JSON.parse(savedPolls));
       }
     }
-  }, []); // Empty dependency array means it only runs once on mount
+  }, []);
 
   useEffect(() => {
     localStorage.setItem("savedPolls", JSON.stringify(polls));
@@ -50,33 +93,98 @@ export default function Home() {
     setOptions([...options, ""]);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const newPoll: Poll = {
-      question,
-      options: options
+    try {
+      const { data: pollData, error: pollError } = await supabase
+        .from("polls")
+        .insert({
+          question: question,
+          created_by: user?.id || null,
+        })
+        .select()
+        .single();
+
+      if (pollError) throw pollError;
+
+      const optionsToInsert = options
         .filter((option) => option.trim() !== "")
         .map((option) => ({
+          poll_id: pollData.id,
           text: option,
-          votes: 0,
-        })),
-      hasVoted: false,
-    };
-    setPolls([...polls, newPoll]);
+        }));
 
-    setQuestion("");
-    setOptions(["", ""]);
-    setError("");
-    setOpen(false);
+      const { data: optionsData, error: optionsError } = await supabase
+        .from("options")
+        .insert(optionsToInsert)
+        .select();
+
+      if (optionsError) throw optionsError;
+      // Reset form
+      setQuestion("");
+      setOptions(["", ""]);
+      setError("");
+      setOpen(false);
+    } catch (error) {
+      console.log("Error creating poll:", error);
+      setError("Failed to create poll");
+    }
   };
 
-  const handleVote = (pollIndex: number, optionIndex: number) => {
-    const newPolls = [...polls];
-    newPolls[pollIndex].options[optionIndex].votes += 1;
-    newPolls[pollIndex].hasVoted = true;
-    newPolls[pollIndex].selectedOptionIndex = optionIndex;
-    setPolls(newPolls);
+  const handleVote = async (pollId: string, optionId: string) => {
+    try {
+      const { error } = await supabase.from("votes").insert({
+        poll_id: pollId,
+        option_id: optionId,
+        user_id: user?.id || null,
+      });
+
+      if (error) {
+        if (error.code === "23505") {
+          setError("You have already voted a sahbi");
+        } else {
+          setError("Failed to cast vote");
+        }
+        return;
+      }
+
+      const updatedPolls = polls.map((poll) =>
+        poll.id === pollId
+          ? { ...poll, hasVoted: true, selectedOptionIndex: optionId }
+          : poll
+      );
+      setPolls(updatedPolls);
+    } catch {
+      error;
+    }
+    {
+      console.error("Error casting vote:", error);
+      setError("Failed to cast vote");
+    }
+  };
+
+  const fetchVoteCounts = async (pollId: string) => {
+    const { data, error } = await supabase
+      .from("vote_counts")
+      .select("*")
+      .eq("poll_id", pollId);
+
+    if (error) {
+      console.error("Error fetching vote counts:", error);
+      return null;
+    }
+
+    return data;
+  };
+
+  const calculatePercentage = (optionId: string, pollId: string) => {
+    const totalVotes = polls
+      .find((p) => p.id === pollId)
+      ?.options.reduce((acc, opt) => acc + (voteCounts[opt.id] || 0), 0);
+
+    if (!totalVotes) return 0;
+    return Math.round(((voteCounts[optionId] || 0) / totalVotes) * 100);
   };
 
   const handleRemoveOptions = (indexToRemove: number) => {
@@ -166,17 +274,22 @@ export default function Home() {
                       className="pl-4 flex items-center gap-2"
                     >
                       <Checkbox
-                        onClick={() => handleVote(pollIndex, optionIndex)}
+                        onClick={() => handleVote(poll.id, option.id)}
                         id={`option-${pollIndex}-${optionIndex}`}
                         disabled={poll.hasVoted}
-                        checked={poll.selectedOptionIndex === optionIndex}
+                        checked={poll.selectedOptionIndex === option.id}
                       />
                       <label
                         htmlFor={`option-${pollIndex}-${optionIndex}`}
                         className="flex justify-between w-full"
                       >
                         <span>{option.text}</span>
-                        <span>{option.votes} votes</span>
+                        <div className="flex gap-2">
+                          <span>{voteCounts[option.id] || 0} votes</span>
+                          <span className="text-gray-500">
+                            ({calculatePercentage(option.id, poll.id)}%)
+                          </span>
+                        </div>
                       </label>
                     </div>
                   ))}
