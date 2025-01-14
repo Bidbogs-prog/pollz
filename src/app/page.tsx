@@ -20,7 +20,7 @@ type Poll = {
   question: string;
   created_by: string | null;
   options: Option[];
-  hasVoted: boolean; // Add this
+  hasVoted: boolean; 
   selectedOptionIndex: string | null;
 };
 
@@ -45,6 +45,7 @@ export default function Home() {
   const [error, setError] = useState<string>("");
   const [user, setUser] = useState<User | null>(null);
   const [voteCounts, setVoteCounts] = useState<{ [key: string]: number }>({});
+  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     console.log("Setting up auth listener...");
@@ -76,18 +77,37 @@ export default function Home() {
     console.log("User state changed:", user ? "Logged in" : "Not logged in");
   }, [user]);
 
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const savedPolls = localStorage.getItem("savedPolls");
-      if (savedPolls) {
-        setPolls(JSON.parse(savedPolls));
+  const fetchPolls = async () => {
+    setIsLoading(true);
+    try {
+    
+      const { data: pollsData, error: pollsError } = await supabase
+        .from('polls')
+        .select(`
+          *,
+          options (*)
+        `);
+  
+      if (pollsError) throw pollsError;
+  
+      if (pollsData) {
+        setPolls(pollsData.map(poll => ({
+          ...poll,
+          hasVoted: false,
+          selectedOptionIndex: null
+        })));
       }
+    } catch (error) {
+      console.error('Error fetching polls:', error);
+      setError('Failed to fetch polls');
+    } finally {
+      setIsLoading(false);
     }
-  }, []);
-
+  };
+  
   useEffect(() => {
-    localStorage.setItem("savedPolls", JSON.stringify(polls));
-  }, [polls]);
+    fetchPolls();
+  }, []);
 
   const handleAddOption = () => {
     setOptions([...options, ""]);
@@ -263,7 +283,7 @@ export default function Home() {
           </DialogContent>
         </Dialog>
         <div className="mt-8  ">
-          {polls.map((poll, pollIndex) => (
+          {isLoading ? (<div>loading polls...</div>) : (polls.map((poll, pollIndex) => (
             <div className="flex gap-2 items-center" key={pollIndex}>
               <div className="mb-6 p-4 border rounded-lg w-[400px]">
                 <h3 className="text-lg font-semibold mb-2">{poll.question}</h3>
@@ -302,7 +322,8 @@ export default function Home() {
                 X
               </Button>
             </div>
-          ))}
+          )))}
+          
         </div>
       </main>
     </div>
