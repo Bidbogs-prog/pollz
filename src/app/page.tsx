@@ -13,18 +13,19 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { supabase } from "@/lib/supabase";
 import { User } from "@supabase/supabase-js";
+import { fetchPolls } from "./actions/fetchpolls";
 
-type Poll = {
+export type Poll = {
   id: string;
   created_at: string;
   question: string;
   created_by: string | null;
   options: Option[];
-  hasVoted: boolean; 
+  hasVoted: boolean;
   selectedOptionIndex: string | null;
 };
 
-type Option = {
+export type Option = {
   id: string;
   poll_id: string;
   text: string;
@@ -39,75 +40,98 @@ type Vote = {
 
 export default function Home() {
   const [polls, setPolls] = useState<Poll[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [question, setQuestion] = useState("");
   const [options, setOptions] = useState(["", ""]);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string>("");
   const [user, setUser] = useState<User | null>(null);
   const [voteCounts, setVoteCounts] = useState<{ [key: string]: number }>({});
-  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    console.log("Setting up auth listener...");
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      console.log(
-        "Initial session check:",
-        session?.user ? "User logged in" : "No user"
-      );
-      setUser(session?.user ?? null);
-    });
+    const loadPollData = async () => {
+      setIsLoading(true);
+      try {
+        const fetchedPolls = await fetchPolls();
+        if (fetchedPolls) {
+          setPolls(fetchedPolls);
 
-    // Listen for auth changes
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      console.log("Auth state changed:", _event);
-      console.log("New session:", session ? "User logged in" : "No user");
-      setUser(session?.user ?? null);
-    });
+          // Fetch vote counts for all polls
+          const votesPromises = fetchedPolls.map((poll) =>
+            fetchVoteCounts(poll.id)
+          );
+          const allVoteCounts = await Promise.all(votesPromises);
 
-    return () => {
-      console.log("Cleaning up auth listener...");
-      subscription.unsubscribe();
-    };
-  }, []);
+          // Combine vote counts into a single object
+          const combinedVoteCounts: { [key: string]: number } = {};
+          allVoteCounts.forEach((pollVotes) => {
+            if (pollVotes) {
+              pollVotes.forEach((vote) => {
+                combinedVoteCounts[vote.option_id] = vote.count;
+              });
+            }
+          });
 
-  useEffect(() => {
-    console.log("User state changed:", user ? "Logged in" : "Not logged in");
-  }, [user]);
-
-  const fetchPolls = async () => {
-    setIsLoading(true);
-    try {
-    
-      const { data: pollsData, error: pollsError } = await supabase
-        .from('polls')
-        .select(`
-          *,
-          options (*)
-        `);
-  
-      if (pollsError) throw pollsError;
-  
-      if (pollsData) {
-        setPolls(pollsData.map(poll => ({
-          ...poll,
-          hasVoted: false,
-          selectedOptionIndex: null
-        })));
+          setVoteCounts(combinedVoteCounts);
+        }
+      } catch (error) {
+        console.error("Error loading poll data:", error);
+        setError("Failed to load polls");
+      } finally {
+        setIsLoading(false);
       }
-    } catch (error) {
-      console.error('Error fetching polls:', error);
-      setError('Failed to fetch polls');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-  
-  useEffect(() => {
-    fetchPolls();
-  }, []);
+    };
+
+    loadPollData();
+  }, []); // Only run on mount
+
+  // useEffect(() => {
+  //   const channel = supabase
+  //     .channel("votes")
+  //     .on(
+  //       "postgres_changes",
+  //       { event: "INSERT", schema: "public", table: "votes" },
+  //       async (payload) => {
+  //         // Refresh vote counts for the affected poll
+  //         const pollId = payload.new.poll_id;
+  //         const newVoteCounts = await fetchVoteCounts(pollId);
+  //         if (newVoteCounts) {
+  //           setVoteCounts((current) => ({
+  //             ...current,
+  //             ...Object.fromEntries(
+  //               newVoteCounts.map((vote) => [vote.option_id, vote.count])
+  //             ),
+  //           }));
+  //         }
+  //       }
+  //     )
+  //     .subscribe();
+
+  //   return () => {
+  //     supabase.removeChannel(channel);
+  //   };
+  // }, []);
+
+  // useEffect(() => {
+  //   const loadPolls = async () => {
+  //     try {
+  //       if (typeof window !== "undefined") {
+  //         const fetchedPolls = await fetchPolls();
+  //         if (fetchedPolls) {
+  //           setPolls(fetchedPolls);
+  //         }
+  //       }
+  //     } catch (error) {
+  //       console.error("Error loading polls:", error);
+  //       setError("Failed to load polls");
+  //     }
+  //   };
+
+  //   loadPolls();
+  // }, []);
+  // useEffect(() => {
+  //   localStorage.setItem("savedPolls", JSON.stringify(polls));
+  // }, [polls]);
 
   const handleAddOption = () => {
     setOptions([...options, ""]);
@@ -175,10 +199,7 @@ export default function Home() {
           : poll
       );
       setPolls(updatedPolls);
-    } catch {
-      error;
-    }
-    {
+    } catch (error) {
       console.error("Error casting vote:", error);
       setError("Failed to cast vote");
     }
@@ -212,9 +233,55 @@ export default function Home() {
       setOptions(options.filter((_, index) => index !== indexToRemove));
     }
   };
-  const handleRemovePolls = (indexToRemove: number) => {
-    setPolls(polls.filter((_, index) => index !== indexToRemove));
+  const handleRemovePolls = async (pollId: string) => {
+    try {
+      // First, delete related votes
+      const { error: votesError } = await supabase
+        .from("votes")
+        .delete()
+        .eq("poll_id", pollId);
+
+      if (votesError) {
+        console.error("Error deleting votes:", votesError);
+        setError("Failed to delete poll votes");
+        return;
+      }
+
+      // Then, delete related options
+      const { error: optionsError } = await supabase
+        .from("options")
+        .delete()
+        .eq("poll_id", pollId);
+
+      if (optionsError) {
+        console.error("Error deleting options:", optionsError);
+        setError("Failed to delete poll options");
+        return;
+      }
+
+      // Finally, delete the poll itself
+      const { error: pollError } = await supabase
+        .from("polls")
+        .delete()
+        .eq("id", pollId);
+
+      if (pollError) {
+        console.error("Error deleting poll:", pollError);
+        setError("Failed to delete poll");
+        return;
+      }
+
+      // Update local state only after successful database deletion
+      setPolls((currentPolls) =>
+        currentPolls.filter((poll) => poll.id !== pollId)
+      );
+      setError(""); // Clear any existing errors
+    } catch (error) {
+      console.error("Error in handleRemovePolls:", error);
+      setError("Failed to delete poll");
+    }
   };
+
   const isFormValid = () => {
     const nonEmptyOptions = options.filter((opt) => opt.trim() !== "");
     return question.trim() !== "" && nonEmptyOptions.length >= 2;
@@ -222,6 +289,7 @@ export default function Home() {
 
   return (
     <div className="min-h-screen p-8 sm:p-20">
+      {isLoading && <p>Loading polls...</p>}
       <main>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
@@ -283,7 +351,7 @@ export default function Home() {
           </DialogContent>
         </Dialog>
         <div className="mt-8  ">
-          {isLoading ? (<div>loading polls...</div>) : (polls.map((poll, pollIndex) => (
+          {polls.map((poll, pollIndex) => (
             <div className="flex gap-2 items-center" key={pollIndex}>
               <div className="mb-6 p-4 border rounded-lg w-[400px]">
                 <h3 className="text-lg font-semibold mb-2">{poll.question}</h3>
@@ -317,13 +385,12 @@ export default function Home() {
               </div>
               <Button
                 variant="destructive"
-                onClick={() => handleRemovePolls(pollIndex)}
+                onClick={() => handleRemovePolls(poll.id)}
               >
                 X
               </Button>
             </div>
-          )))}
-          
+          ))}
         </div>
       </main>
     </div>

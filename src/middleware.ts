@@ -1,8 +1,19 @@
-import { createMiddlewareClient } from '@supabase/auth-helpers-nextjs';
-import { NextResponse } from 'next/server';
-import { NextRequest } from 'next/server';
+import { createMiddlewareClient } from "@supabase/auth-helpers-nextjs";
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
 
 export async function middleware(req: NextRequest) {
+  const cookies = req.headers
+    .get("cookie")
+    ?.split(";")
+    .reduce((acc, cookie) => {
+      const [key, value] = cookie.trim().split("=");
+      acc[key] = value;
+      return acc;
+    }, {} as Record<string, string>);
+
+  console.log("All cookies:", cookies);
+
   const res = NextResponse.next();
   const supabase = createMiddlewareClient({ req, res });
 
@@ -10,23 +21,29 @@ export async function middleware(req: NextRequest) {
     data: { session },
   } = await supabase.auth.getSession();
 
-  // If there's no session and the user is trying to access a protected route
-  if (!session && req.nextUrl.pathname !== '/auth') {
-    // Redirect them to /auth
-    return NextResponse.redirect(new URL('/auth', req.url));
+  console.log("Session check:", {
+    hasSession: !!session,
+    hasAccessToken: !!cookies?.["sb-access-token"],
+    hasRefreshToken: !!cookies?.["sb-refresh-token"],
+  });
+
+  // Auth page handling
+  if (req.nextUrl.pathname === "/auth") {
+    if (session) {
+      console.log("Session found on auth page - redirecting to home");
+      return NextResponse.redirect(new URL("/", req.url));
+    }
+
+    return res;
   }
 
-  // If there's a session and they're on the auth page
-  if (session && req.nextUrl.pathname === '/auth') {
-    // Redirect them to the home page
-    return NextResponse.redirect(new URL('/', req.url));
-    
+  if (!session) {
+    console.log("No session - redirecting to auth");
+    return NextResponse.redirect(new URL("/auth", req.url));
   }
 
   return res;
 }
-
-// Specify which routes should be protected
 export const config = {
-  matcher: ['/((?!api|_next/static|_next/image|favicon.ico).*)'],
+  matcher: ["/((?!api|_next/static|_next/image|favicon.ico).*)"],
 };
