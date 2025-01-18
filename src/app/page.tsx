@@ -330,7 +330,7 @@ export default function Home() {
             </DialogHeader>
             <form onSubmit={handleSubmit}>
               <div className="mt-2">
-                <p>What's your question?</p>
+                <p>What&apos;s your question?</p>
                 <Input
                   value={question}
                   onChange={(e) => setQuestion(e.target.value)}

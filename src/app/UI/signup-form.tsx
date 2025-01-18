@@ -1,10 +1,8 @@
 import { useActionState } from "react";
 import { signup } from "../actions/auth";
-import { useRouter } from "next/router";
-import { useState } from "react";
 
 export function SignupForm() {
-  const [state, action, pending] = useActionState(signup, undefined);
+  const [state, action] = useActionState(signup, undefined);
 
   return (
     <form

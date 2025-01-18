@@ -1,11 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { supabase } from "@/lib/supabase";
 import { AuthError } from "@supabase/supabase-js";
-import { useRouter } from "next/navigation";
 
 type AuthMode = "signin" | "signup";
 
@@ -22,7 +21,6 @@ export function AuthForm() {
     type: "success" | "error";
     message: string;
   } | null>(null);
-  const router = useRouter();
 
   const validatePassword = (password: string) => {
     if (password.length < 6) {

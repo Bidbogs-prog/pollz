@@ -1,13 +1,5 @@
 "use client";
-import {
-  Calendar,
-  Home,
-  Inbox,
-  Search,
-  Settings,
-  User,
-  Vote,
-} from "lucide-react";
+import { Home, Search, User, Vote } from "lucide-react";
 
 import {
   Sidebar,
