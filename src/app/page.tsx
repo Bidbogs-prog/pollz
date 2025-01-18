@@ -31,11 +31,9 @@ export type Option = {
   text: string;
 };
 
-type Vote = {
-  id: string;
-  poll_id: string;
+type VoteCount = {
   option_id: string;
-  user_id: string | null;
+  count: number;
 };
 
 export default function Home() {
@@ -57,22 +55,16 @@ export default function Home() {
           setPolls(fetchedPolls);
 
           // Fetch vote counts for all polls
-          const votesPromises = fetchedPolls.map((poll) =>
-            fetchVoteCounts(poll.id)
-          );
-          const allVoteCounts = await Promise.all(votesPromises);
-
-          // Combine vote counts into a single object
-          const combinedVoteCounts: { [key: string]: number } = {};
-          allVoteCounts.forEach((pollVotes) => {
+          const allVoteCounts: { [key: string]: number } = {};
+          for (const poll of fetchedPolls) {
+            const pollVotes = await fetchVoteCounts(poll.id);
             if (pollVotes) {
-              pollVotes.forEach((vote) => {
-                combinedVoteCounts[vote.option_id] = vote.count;
+              pollVotes.forEach((vote: VoteCount) => {
+                allVoteCounts[vote.option_id] = vote.count;
               });
             }
-          });
-
-          setVoteCounts(combinedVoteCounts);
+          }
+          setVoteCounts(allVoteCounts);
         }
       } catch (error) {
         console.error("Error loading poll data:", error);
@@ -83,55 +75,64 @@ export default function Home() {
     };
 
     loadPollData();
-  }, []); // Only run on mount
+  }, []);
 
-  // useEffect(() => {
-  //   const channel = supabase
-  //     .channel("votes")
-  //     .on(
-  //       "postgres_changes",
-  //       { event: "INSERT", schema: "public", table: "votes" },
-  //       async (payload) => {
-  //         // Refresh vote counts for the affected poll
-  //         const pollId = payload.new.poll_id;
-  //         const newVoteCounts = await fetchVoteCounts(pollId);
-  //         if (newVoteCounts) {
-  //           setVoteCounts((current) => ({
-  //             ...current,
-  //             ...Object.fromEntries(
-  //               newVoteCounts.map((vote) => [vote.option_id, vote.count])
-  //             ),
-  //           }));
-  //         }
-  //       }
-  //     )
-  //     .subscribe();
+  useEffect(() => {
+    console.log("Setting up auth listener...");
+    // Get initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      console.log(
+        "Initial session check:",
+        session?.user ? "User logged in" : "No user"
+      );
+      setUser(session?.user ?? null);
+    });
 
-  //   return () => {
-  //     supabase.removeChannel(channel);
-  //   };
-  // }, []);
+    // Listen for auth changes
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      console.log("Auth state changed:", _event);
+      setUser(session?.user ?? null);
+    });
 
-  // useEffect(() => {
-  //   const loadPolls = async () => {
-  //     try {
-  //       if (typeof window !== "undefined") {
-  //         const fetchedPolls = await fetchPolls();
-  //         if (fetchedPolls) {
-  //           setPolls(fetchedPolls);
-  //         }
-  //       }
-  //     } catch (error) {
-  //       console.error("Error loading polls:", error);
-  //       setError("Failed to load polls");
-  //     }
-  //   };
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
 
-  //   loadPolls();
-  // }, []);
-  // useEffect(() => {
-  //   localStorage.setItem("savedPolls", JSON.stringify(polls));
-  // }, [polls]);
+  useEffect(() => {
+    const channel = supabase
+      .channel("votes")
+      .on(
+        "postgres_changes" as const,
+        { event: "*", schema: "public", table: "votes" }, // Listen to all vote changes
+        async (payload) => {
+          // Refresh vote counts for the affected poll
+          const pollId =
+            (payload.new as any)?.poll_id || (payload.old as any)?.poll_id;
+          if (pollId) {
+            const newVoteCounts = await fetchVoteCounts(pollId);
+            if (newVoteCounts) {
+              setVoteCounts((current) => ({
+                ...current,
+                ...Object.fromEntries(
+                  newVoteCounts.map((vote: VoteCount) => [
+                    vote.option_id,
+                    vote.count,
+                  ])
+                ),
+              }));
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   const handleAddOption = () => {
     setOptions([...options, ""]);
@@ -165,6 +166,16 @@ export default function Home() {
         .select();
 
       if (optionsError) throw optionsError;
+
+      // Add the new poll to the local state
+      const newPoll: Poll = {
+        ...pollData,
+        options: optionsData,
+        hasVoted: false,
+        selectedOptionIndex: null,
+      };
+      setPolls((current) => [...current, newPoll]);
+
       // Reset form
       setQuestion("");
       setOptions(["", ""]);
@@ -193,6 +204,17 @@ export default function Home() {
         return;
       }
 
+      // Immediately fetch new vote counts for this poll
+      const newVoteCounts = await fetchVoteCounts(pollId);
+      if (newVoteCounts) {
+        setVoteCounts((current) => ({
+          ...current,
+          ...Object.fromEntries(
+            newVoteCounts.map((vote: VoteCount) => [vote.option_id, vote.count])
+          ),
+        }));
+      }
+
       const updatedPolls = polls.map((poll) =>
         poll.id === pollId
           ? { ...poll, hasVoted: true, selectedOptionIndex: optionId }
@@ -206,9 +228,14 @@ export default function Home() {
   };
 
   const fetchVoteCounts = async (pollId: string) => {
+    type VoteCountRow = {
+      option_id: string;
+      vote_count: number;
+    };
+
     const { data, error } = await supabase
       .from("vote_counts")
-      .select("*")
+      .select("option_id, vote_count")
       .eq("poll_id", pollId);
 
     if (error) {
@@ -216,7 +243,10 @@ export default function Home() {
       return null;
     }
 
-    return data;
+    return (data as VoteCountRow[]).map((row) => ({
+      option_id: row.option_id,
+      count: row.vote_count,
+    }));
   };
 
   const calculatePercentage = (optionId: string, pollId: string) => {
@@ -289,7 +319,6 @@ export default function Home() {
 
   return (
     <div className="min-h-screen p-8 sm:p-20">
-      {isLoading && <p>Loading polls...</p>}
       <main>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
@@ -308,7 +337,6 @@ export default function Home() {
                   placeholder="Enter your question"
                 />
               </div>
-              {error && <p className="text-red-500 text-sm mt-1">{error}</p>}
 
               {options.map((option, index) => (
                 <div
@@ -351,6 +379,7 @@ export default function Home() {
           </DialogContent>
         </Dialog>
         <div className="mt-8  ">
+          {isLoading && <p>Loading polls...</p>}
           {polls.map((poll, pollIndex) => (
             <div className="flex gap-2 items-center" key={pollIndex}>
               <div className="mb-6 p-4 border rounded-lg w-[400px]">
@@ -382,6 +411,7 @@ export default function Home() {
                     </div>
                   ))}
                 </div>
+                {error && <p className="text-red-500 text-sm mt-1">{error}</p>}
               </div>
               <Button
                 variant="destructive"

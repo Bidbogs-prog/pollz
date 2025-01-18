@@ -15,14 +15,17 @@ export default async function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body suppressHydrationWarning>
-        <SidebarProvider>
-          <AppSidebar />
-
-          <main>
-            <SidebarTrigger />
-            {children}
-          </main>
-        </SidebarProvider>
+        {session ? (
+          <SidebarProvider>
+            <AppSidebar />
+            <main>
+              <SidebarTrigger />
+              {children}
+            </main>
+          </SidebarProvider>
+        ) : (
+          <main>{children}</main>
+        )}
       </body>
     </html>
   );
